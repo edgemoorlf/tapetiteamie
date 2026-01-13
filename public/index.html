@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>语音交互视频播放器</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Arial', sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 20px;
+    }
+
+    .container {
+      background: rgba(255, 255, 255, 0.95);
+      border-radius: 20px;
+      padding: 30px;
+      max-width: 900px;
+      width: 100%;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+    }
+
+    h1 {
+      text-align: center;
+      color: #667eea;
+      margin-bottom: 30px;
+      font-size: 2em;
+    }
+
+    .video-container {
+      position: relative;
+      background: #000;
+      border-radius: 15px;
+      overflow: hidden;
+      margin-bottom: 20px;
+    }
+
+    video {
+      width: 100%;
+      display: block;
+    }
+
+    .voice-prompt {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: rgba(0, 0, 0, 0.85);
+      color: white;
+      padding: 30px 40px;
+      border-radius: 15px;
+      text-align: center;
+      display: none;
+      z-index: 10;
+    }
+
+    .voice-prompt.active {
+      display: block;
+      animation: fadeIn 0.3s ease;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translate(-50%, -50%) scale(0.9); }
+      to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+    }
+
+    .mic-icon {
+      font-size: 48px;
+      margin-bottom: 15px;
+      animation: pulse 1.5s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { transform: scale(1); opacity: 1; }
+      50% { transform: scale(1.1); opacity: 0.8; }
+    }
+
+    .controls {
+      display: flex;
+      gap: 15px;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+    }
+
+    button {
+      flex: 1;
+      padding: 12px 24px;
+      border: none;
+      border-radius: 10px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      font-size: 16px;
+      cursor: pointer;
+      transition: transform 0.2s, box-shadow 0.2s;
+      min-width: 120px;
+    }
+
+    button:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+    }
+
+    button:active {
+      transform: translateY(0);
+    }
+
+    button:disabled {
+      background: #ccc;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .video-list {
+      margin-top: 20px;
+    }
+
+    .video-list h3 {
+      color: #667eea;
+      margin-bottom: 15px;
+    }
+
+    .video-item {
+      padding: 12px;
+      background: #f5f5f5;
+      margin-bottom: 8px;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.2s;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .video-item:hover {
+      background: #e0e0e0;
+    }
+
+    .video-item.active {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+    }
+
+    .status {
+      text-align: center;
+      padding: 15px;
+      border-radius: 10px;
+      margin-top: 15px;
+      background: #f0f0f0;
+      color: #666;
+    }
+
+    .status.listening {
+      background: #fff3cd;
+      color: #856404;
+    }
+
+    .status.processing {
+      background: #d1ecf1;
+      color: #0c5460;
+    }
+
+    .preload-info {
+      font-size: 12px;
+      color: #999;
+      margin-top: 5px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🎬 语音交互视频播放器</h1>
+    
+    <div class="video-container">
+      <video id="mainVideo" preload="auto"></video>
+      <div id="voicePrompt" class="voice-prompt">
+        <div class="mic-icon">🎤</div>
+        <h2>请说出你想播放的视频...</h2>
+        <p>例如："视频1"、"第二个"</p>
+      </div>
+    </div>
+
+    <div class="controls">
+      <button id="playBtn">▶ 播放</button>
+      <button id="pauseBtn">⏸ 暂停</button>
+      <button id="testVoiceBtn">🎤 测试语音</button>
+    </div>
+
+    <div id="status" class="status">准备就绪</div>
+
+    <div class="video-list">
+      <h3>📹 可用视频列表</h3>
+      <div id="videoListContainer"></div>
+      <div class="preload-info">* 视频会在播放前自动预加载以确保流畅切换</div>
+    </div>
+  </div>
+
+  <script>
+    class VoiceVideoPlayer {
+      constructor() {
+        this.mainVideo = document.getElementById('mainVideo');
+        this.voicePrompt = document.getElementById('voicePrompt');
+        this.status = document.getElementById('status');
+        this.videoListContainer = document.getElementById('videoListContainer');
+        
+        this.videos = [];
+        this.currentIndex = 0;
+        this.preloadedVideos = new Map();
+        this.isListening = false;
+        this.mediaRecorder = null;
+        this.audioChunks = [];
+        
+        this.init();
+      }
+
+      async init() {
+        await this.loadVideos();
+        this.setupEventListeners();
+        this.preloadNextVideos();
+      }
+
+      async loadVideos() {
+        try {
+          const response = await fetch('/api/videos');
+          this.videos = await response.json();
+          
+          if (this.videos.length === 0) {
+            this.updateStatus('请在 videos 目录中添加 mp4 视频文件');
+            return;
+          }
+          
+          this.renderVideoList();
+          this.loadVideo(0);
+          this.updateStatus(`已加载 ${this.videos.length} 个视频`);
+        } catch (error) {
+          this.updateStatus('加载视频列表失败: ' + error.message);
+        }
+      }
+
+      renderVideoList() {
+        this.videoListContainer.innerHTML = '';
+        this.videos.forEach((video, index) => {
+          const div = document.createElement('div');
+          div.className = 'video-item';
+          div.innerHTML = `
+            <span>${index + 1}. ${video.name}</span>
+            <span style="font-size: 12px; color: #999;">点击播放</span>
+          `;
+          div.addEventListener('click', () => this.loadVideo(index));
+          this.videoListContainer.appendChild(div);
+        });
+      }
+
+      loadVideo(index) {
+        if (index < 0 || index >= this.videos.length) return;
+        
+        this.currentIndex = index;
+        const video = this.videos[index];
+        
+        // 如果已经预加载，使用预加载的视频
+        if (this.preloadedVideos.has(index)) {
+          this.mainVideo.src = this.preloadedVideos.get(index);
+        } else {
+          this.mainVideo.src = video.url;
+        }
+        
+        this.mainVideo.load();
+        this.updateVideoListUI();
+        this.updateStatus(`正在播放: ${video.name}`);
+        
+        // 预加载接下来的视频
+        this.preloadNextVideos();
+      }
+
+      preloadNextVideos() {
+        // 预加载接下来的2个视频
+        for (let i = 1; i <= 2; i++) {
+          const nextIndex = (this.currentIndex + i) % this.videos.length;
+          if (!this.preloadedVideos.has(nextIndex)) {
+            this.preloadVideo(nextIndex);
+          }
+        }
+      }
+
+      preloadVideo(index) {
+        if (index < 0 || index >= this.videos.length) return;
+        
+        const video = this.videos[index];
+        const preloadVideo = document.createElement('video');
+        preloadVideo.preload = 'auto';
+        preloadVideo.src = video.url;
+        
+        // 存储blob URL以便快速切换
+        this.preloadedVideos.set(index, video.url);
+        
+        console.log(`预加载视频 ${index + 1}: ${video.name}`);
+      }
+
+      updateVideoListUI() {
+        const items = this.videoListContainer.querySelectorAll('.video-item');
+        items.forEach((item, index) => {
+          item.classList.toggle('active', index === this.currentIndex);
+        });
+      }
+
+      setupEventListeners() {
+        // 视频结束时触发语音识别
+        this.mainVideo.addEventListener('ended', () => {
+          this.showVoicePrompt();
+          this.startVoiceRecognition();
+        });
+
+        // 播放控制
+        document.getElementById('playBtn').addEventListener('click', () => {
+          this.mainVideo.play();
+        });
+
+        document.getElementById('pauseBtn').addEventListener('click', () => {
+          this.mainVideo.pause();
+        });
+
+        document.getElementById('testVoiceBtn').addEventListener('click', () => {
+          this.showVoicePrompt();
+          this.startVoiceRecognition();
+        });
+      }
+
+      showVoicePrompt() {
+        this.voicePrompt.classList.add('active');
+      }
+
+      hideVoicePrompt() {
+        this.voicePrompt.classList.remove('active');
+      }
+
+      async startVoiceRecognition() {
+        if (this.isListening) return;
+        
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          this.isListening = true;
+          this.audioChunks = [];
+          
+          this.mediaRecorder = new MediaRecorder(stream);
+          
+          this.mediaRecorder.addEventListener('dataavailable', (event) => {
+            this.audioChunks.push(event.data);
+          });
+
+          this.mediaRecorder.addEventListener('stop', async () => {
+            const audioBlob = new Blob(this.audioChunks, { type: 'audio/webm' });
+            await this.processVoice(audioBlob);
+            
+            stream.getTracks().forEach(track => track.stop());
+            this.isListening = false;
+          });
+
+          this.mediaRecorder.start();
+          this.updateStatus('🎤 正在听...', 'listening');
+
+          // 3秒后停止录音
+          setTimeout(() => {
+            if (this.mediaRecorder && this.mediaRecorder.state === 'recording') {
+              this.mediaRecorder.stop();
+            }
+          }, 3000);
+
+        } catch (error) {
+          this.updateStatus('麦克风访问失败: ' + error.message);
+          this.hideVoicePrompt();
+        }
+      }
+
+      async processVoice(audioBlob) {
+        this.updateStatus('🔄 正在处理语音...', 'processing');
+        
+        try {
+          // 使用 FormData 上传音频（Python 服务器支持）
+          const formData = new FormData();
+          formData.append('audio', audioBlob, 'recording.webm');
+
+          const response = await fetch('/api/speech-to-text', {
+            method: 'POST',
+            body: formData
+          });
+
+          if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.message || errorData.error || '语音识别失败');
+          }
+
+          const result = await response.json();
+          console.log('API 返回结果:', result);
+          
+          // 安全地处理 transcript
+          const transcript = result.transcript ? result.transcript.trim().toLowerCase() : '';
+          
+          if (!transcript) {
+            this.updateStatus('⚠️ 未能识别语音内容，请重试或播放下一个');
+            this.hideVoicePrompt();
+            setTimeout(() => {
+              this.playNext();
+            }, 2000);
+            return;
+          }
+
+          this.updateStatus(`✅ 识别结果: "${transcript}"`);
+          this.hideVoicePrompt();
+          
+          // 匹配视频
+          const videoIndex = this.matchVideo(transcript);
+          if (videoIndex !== -1) {
+            setTimeout(() => {
+              this.loadVideo(videoIndex);
+              this.mainVideo.play();
+            }, 1000);
+          } else {
+            this.updateStatus(`未找到匹配的视频 "${transcript}"，播放下一个`);
+            setTimeout(() => {
+              this.playNext();
+            }, 2000);
+          }
+        } catch (error) {
+          console.error('语音处理错误:', error);
+          this.updateStatus('❌ 语音处理失败: ' + error.message);
+          this.hideVoicePrompt();
+          
+          // 失败后播放下一个视频
+          setTimeout(() => {
+            this.playNext();
+          }, 2000);
+        }
+      }
+
+      matchVideo(transcript) {
+        // 匹配逻辑：支持"视频1"、"第一个"、"1"等表达
+        for (let i = 0; i < this.videos.length; i++) {
+          const videoName = this.videos[i].name.toLowerCase();
+          const index = i + 1;
+          
+          if (transcript.includes(videoName) ||
+              transcript.includes(`视频${index}`) ||
+              transcript.includes(`第${this.numberToChinese(index)}个`) ||
+              transcript === `${index}`) {
+            return i;
+          }
+        }
+        return -1;
+      }
+
+      numberToChinese(num) {
+        const chinese = ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十'];
+        return chinese[num - 1] || num.toString();
+      }
+
+      playNext() {
+        const nextIndex = (this.currentIndex + 1) % this.videos.length;
+        this.loadVideo(nextIndex);
+        this.mainVideo.play();
+      }
+
+      updateStatus(message, className = '') {
+        this.status.textContent = message;
+        this.status.className = 'status ' + className;
+      }
+    }
+
+    // 初始化播放器
+    const player = new VoiceVideoPlayer();
+  </script>
+</body>
+</html>
