@@ -143,4 +143,6 @@ See `VOICE.md` for detailed implementation progress and design decisions for the
 
 See `VIDEO_MATCHING_REFACTORED.md` for the new modular video matching architecture.
 
+See `LLM_MATCHING.md` for the LLM-based conversational video matching system.
+
 See `TRANSCRIPT_SETUP.md` for guide on adding video transcripts for content-based matching.

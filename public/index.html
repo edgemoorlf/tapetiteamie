@@ -380,11 +380,11 @@
     }
 
     /**
-     * Strategy 3: Match by video transcript content
+     * Strategy 3: Match by video transcript content (simple word matching)
      */
     class TranscriptMatchStrategy extends VideoMatchStrategy {
       constructor() {
-        super('Transcript Match', 100); // Highest priority
+        super('Transcript Match', 50); // Lower priority than LLM
       }
 
       match(transcript, videos, context) {
@@ -441,6 +441,75 @@
     }
 
     /**
+     * Strategy 4: LLM-based conversational matching (FALLBACK)
+     * Uses DashScope Qwen to understand conversational context
+     * Runs in parallel but only used if other strategies fail
+     */
+    class LLMConversationalMatchStrategy extends VideoMatchStrategy {
+      constructor() {
+        super('LLM Conversational Match', 10); // LOW priority - fallback only
+      }
+
+      async match(transcript, videos, context) {
+        const cleanTranscript = transcript.trim();
+
+        // Filter videos that have transcripts
+        const videosWithTranscripts = videos
+          .map((v, i) => ({ video: v, index: i }))
+          .filter(v => v.video.transcript);
+
+        if (videosWithTranscripts.length === 0) {
+          return null; // No transcripts to match against
+        }
+
+        try {
+          console.log('[LLM] Starting LLM matching in background...');
+
+          // Call LLM via server
+          const response = await fetch('/api/llm-match', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              user_speech: cleanTranscript,
+              videos: videosWithTranscripts.map(v => ({
+                index: v.index,
+                name: v.video.name,
+                transcript: v.video.transcript
+              }))
+            })
+          });
+
+          if (!response.ok) {
+            console.error('[LLM] LLM matching failed:', response.statusText);
+            return null;
+          }
+
+          const result = await response.json();
+          console.log('[LLM] LLM matching complete:', result);
+
+          if (result.matched_index !== null && result.matched_index >= 0) {
+            return {
+              index: result.matched_index,
+              confidence: result.confidence || 0.95,
+              reason: `LLM match: ${result.reason || 'Conversational response'}`
+            };
+          }
+
+          return null;
+
+        } catch (error) {
+          console.error('[LLM] LLM matching error:', error);
+          return null;
+        }
+      }
+
+      buildPrompt(userSpeech, videosWithTranscripts) {
+        // This is just for reference, actual prompt is built on server
+        return `User said: "${userSpeech}"\nWhich video is the best conversational response?`;
+      }
+    }
+
+    /**
      * Video Matcher - Coordinates all matching strategies
      */
     class VideoMatcher {
@@ -460,39 +529,82 @@
 
       /**
        * Find best matching video for transcript
+       * Optimized: Run LLM in parallel but use fast strategies first
        */
-      findMatch(transcript, videos, context = {}) {
-        const results = [];
+      async findMatch(transcript, videos, context = {}) {
+        console.log('[VideoMatcher] Starting parallel matching...');
 
-        // Try all strategies
-        for (const strategy of this.strategies) {
+        // Separate strategies into fast and slow
+        const fastStrategies = this.strategies.filter(s => s.priority >= 50);
+        const llmStrategy = this.strategies.find(s => s.name === 'LLM Conversational Match');
+
+        const results = [];
+        let llmPromise = null;
+
+        // Start LLM in background (don't wait)
+        if (llmStrategy) {
+          console.log('[VideoMatcher] Starting LLM in background...');
+          llmPromise = llmStrategy.match(transcript, videos, context)
+            .then(result => {
+              if (result) {
+                console.log('[VideoMatcher] LLM completed:', result);
+                return { ...result, strategy: llmStrategy.name };
+              }
+              return null;
+            })
+            .catch(error => {
+              console.error('[VideoMatcher] LLM failed:', error);
+              return null;
+            });
+        }
+
+        // Try fast strategies first (synchronous)
+        console.log('[VideoMatcher] Trying fast strategies...');
+        for (const strategy of fastStrategies) {
           try {
-            const result = strategy.match(transcript, videos, context);
+            const result = await strategy.match(transcript, videos, context);
             if (result) {
               results.push({
                 ...result,
                 strategy: strategy.name
               });
+              console.log(`[VideoMatcher] Fast match found: ${strategy.name}`);
             }
           } catch (error) {
-            console.error(`Strategy ${strategy.name} failed:`, error);
+            console.error(`[VideoMatcher] Strategy ${strategy.name} failed:`, error);
           }
         }
 
-        // No matches found
-        if (results.length === 0) {
-          this.logMatch(transcript, null, 'No match found');
-          return null;
+        // If fast strategies found matches, use them immediately
+        if (results.length > 0) {
+          console.log('[VideoMatcher] Using fast strategy result');
+          results.sort((a, b) => b.confidence - a.confidence);
+          const bestMatch = results[0];
+          this.logMatch(transcript, bestMatch, 'Fast match found');
+
+          // LLM is still running in background, but we don't wait for it
+          if (llmPromise) {
+            console.log('[VideoMatcher] LLM still running, but not waiting...');
+          }
+
+          return bestMatch;
         }
 
-        // Sort by confidence (highest first)
-        results.sort((a, b) => b.confidence - a.confidence);
+        // No fast matches found, wait for LLM
+        console.log('[VideoMatcher] No fast matches, waiting for LLM...');
+        if (llmPromise) {
+          const llmResult = await llmPromise;
+          if (llmResult) {
+            console.log('[VideoMatcher] Using LLM fallback result');
+            this.logMatch(transcript, llmResult, 'LLM fallback match');
+            return llmResult;
+          }
+        }
 
-        // Return best match
-        const bestMatch = results[0];
-        this.logMatch(transcript, bestMatch, 'Match found');
-
-        return bestMatch;
+        // No matches at all
+        console.log('[VideoMatcher] No matches found');
+        this.logMatch(transcript, null, 'No match found');
+        return null;
       }
 
       /**
@@ -565,10 +677,12 @@
         this.browserRecognition = null;
 
         // Initialize video matcher with strategies
+        // Priority order: Fast strategies first, LLM as fallback
         this.videoMatcher = new VideoMatcher();
-        this.videoMatcher.addStrategy(new TranscriptMatchStrategy());
-        this.videoMatcher.addStrategy(new FilenameMatchStrategy());
-        this.videoMatcher.addStrategy(new NumericMatchStrategy());
+        this.videoMatcher.addStrategy(new FilenameMatchStrategy());        // Priority: 80
+        this.videoMatcher.addStrategy(new NumericMatchStrategy());         // Priority: 70
+        this.videoMatcher.addStrategy(new TranscriptMatchStrategy());      // Priority: 50
+        this.videoMatcher.addStrategy(new LLMConversationalMatchStrategy()); // Priority: 10 (fallback)
 
         this.init();
       }
@@ -1015,7 +1129,7 @@
         return result;
       }
 
-      handleRecognitionComplete(transcript) {
+      async handleRecognitionComplete(transcript) {
         this.hideVoicePrompt();
 
         if (!transcript || transcript.trim() === '') {
@@ -1029,8 +1143,8 @@
         const cleanTranscript = transcript.trim().toLowerCase();
         this.updateStatus(`✅ 识别结果: "${cleanTranscript}"`);
 
-        // Use VideoMatcher to find best match
-        const match = this.videoMatcher.findMatch(cleanTranscript, this.videos, {
+        // Use VideoMatcher to find best match (now async)
+        const match = await this.videoMatcher.findMatch(cleanTranscript, this.videos, {
           currentIndex: this.currentIndex
         });
 

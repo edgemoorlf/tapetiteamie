@@ -7,6 +7,7 @@ from flask_socketio import SocketIO, emit
 from werkzeug.utils import secure_filename
 import dashscope
 from dashscope.audio.asr import Recognition, RecognitionCallback
+from dashscope import Generation
 from dotenv import load_dotenv
 import tempfile
 import logging
@@ -310,6 +311,122 @@ def health_check():
         'sdkVersion': dashscope.__version__ if hasattr(dashscope, '__version__') else 'unknown',
         'timestamp': os.popen('date').read().strip()
     })
+
+@app.route('/api/llm-match', methods=['POST'])
+def llm_match():
+    """Use LLM to match user speech to best video response"""
+    try:
+        data = request.json
+        user_speech = data.get('user_speech', '')
+        videos = data.get('videos', [])
+
+        if not user_speech or not videos:
+            return jsonify({'error': 'Missing user_speech or videos'}), 400
+
+        logger.info(f"LLM matching: user_speech='{user_speech}', {len(videos)} videos")
+
+        # Build prompt for Qwen
+        prompt = build_llm_matching_prompt(user_speech, videos)
+
+        # Call Qwen model
+        response = Generation.call(
+            model='qwen-turbo',
+            prompt=prompt
+        )
+
+        if response.status_code != 200:
+            logger.error(f"Qwen API error: {response.message}")
+            return jsonify({'error': 'LLM API failed', 'message': response.message}), 500
+
+        # Parse LLM response
+        llm_output = response.output.text.strip()
+        logger.info(f"LLM output: {llm_output}")
+
+        # Extract matched index from LLM response
+        matched_index, confidence, reason = parse_llm_response(llm_output, videos)
+
+        logger.info(f"LLM match result: index={matched_index}, confidence={confidence}, reason={reason}")
+
+        return jsonify({
+            'matched_index': matched_index,
+            'confidence': confidence,
+            'reason': reason,
+            'llm_output': llm_output
+        })
+
+    except Exception as e:
+        logger.error(f"LLM matching error: {e}")
+        logger.exception(e)
+        return jsonify({'error': str(e)}), 500
+
+
+def build_llm_matching_prompt(user_speech, videos):
+    """Build prompt for LLM to match user speech to video responses"""
+
+    prompt = f"""你是一个对话匹配助手。用户说了一句话，你需要从多个视频回复中选择最合适的回应。
+
+用户说: "{user_speech}"
+
+可选的视频回复:
+"""
+
+    for i, video in enumerate(videos):
+        prompt += f"\n{i}. {video['name']}\n   内容: {video['transcript'][:200]}\n"
+
+    prompt += """
+请分析用户的话，选择最合适的视频作为回应。考虑:
+1. 对话的连贯性和自然性
+2. 情感和语气的匹配
+3. 上下文的合理性
+
+请只返回一个JSON格式的回答:
+{
+  "index": 选中的视频索引(数字),
+  "confidence": 置信度(0-1之间的小数),
+  "reason": "选择理由(简短说明)"
+}
+
+如果没有合适的匹配，返回:
+{
+  "index": -1,
+  "confidence": 0,
+  "reason": "没有合适的回应"
+}
+"""
+
+    return prompt
+
+
+def parse_llm_response(llm_output, videos):
+    """Parse LLM response to extract matched index"""
+    try:
+        # Try to parse as JSON
+        import re
+
+        # Find JSON in the response
+        json_match = re.search(r'\{[^}]+\}', llm_output)
+        if json_match:
+            result = json.loads(json_match.group())
+            index = result.get('index', -1)
+            confidence = result.get('confidence', 0.95)
+            reason = result.get('reason', 'LLM matched')
+
+            # Validate index
+            if index >= 0 and index < len(videos):
+                return index, confidence, reason
+
+        # Fallback: try to find number in response
+        numbers = re.findall(r'\b(\d+)\b', llm_output)
+        if numbers:
+            index = int(numbers[0])
+            if index >= 0 and index < len(videos):
+                return index, 0.85, 'Extracted from LLM response'
+
+        return -1, 0, 'No match found'
+
+    except Exception as e:
+        logger.error(f"Error parsing LLM response: {e}")
+        return -1, 0, f'Parse error: {str(e)}'
 
 # ============================================================================
 # WebSocket Streaming Implementation
