@@ -1,13 +1,16 @@
 import os
 import json
+import struct
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
+from flask_socketio import SocketIO, emit
 from werkzeug.utils import secure_filename
 import dashscope
-from dashscope.audio.asr import Recognition
+from dashscope.audio.asr import Recognition, RecognitionCallback
 from dotenv import load_dotenv
 import tempfile
 import logging
+from threading import Lock
 
 # 加载环境变量
 load_dotenv()
@@ -18,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__, static_folder='public', static_url_path='')
 CORS(app)
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 
 # 配置
 DASHSCOPE_API_KEY = os.getenv('DASHSCOPE_API_KEY')
@@ -43,19 +47,43 @@ def index():
 
 @app.route('/api/videos', methods=['GET'])
 def get_videos():
-    """获取所有视频列表"""
+    """获取所有视频列表及其字幕"""
     try:
         if not os.path.exists(UPLOAD_FOLDER):
             return jsonify([])
-        
+
         videos = []
         for filename in os.listdir(UPLOAD_FOLDER):
             if filename.endswith('.mp4'):
-                videos.append({
+                video_info = {
                     'name': filename,
                     'url': f'/videos/{filename}'
-                })
-        
+                }
+
+                # Check for transcript file (.txt with same name)
+                transcript_path = os.path.join(UPLOAD_FOLDER, filename.replace('.mp4', '.txt'))
+                if os.path.exists(transcript_path):
+                    try:
+                        with open(transcript_path, 'r', encoding='utf-8') as f:
+                            video_info['transcript'] = f.read().strip()
+                            logger.info(f"Loaded transcript for {filename}: {len(video_info['transcript'])} chars")
+                    except Exception as e:
+                        logger.warning(f"Failed to load transcript for {filename}: {e}")
+
+                videos.append(video_info)
+
+        # Sort videos: introduction.mp4 first, then alphabetically
+        def sort_key(video):
+            name = video['name'].lower()
+            if name == 'introduction.mp4':
+                return (0, '')  # First priority
+            else:
+                return (1, name)  # Alphabetical order
+
+        videos.sort(key=sort_key)
+
+        logger.info(f"Loaded {len(videos)} videos in order: {[v['name'] for v in videos]}")
+
         return jsonify(videos)
     except Exception as e:
         logger.error(f"获取视频列表失败: {e}")
@@ -140,11 +168,8 @@ def speech_to_text():
         # 读取音频文件内容（作为二进制数据）
         with open(temp_filepath, 'rb') as f:
             audio_data = f.read()
-        
-        logger.info(f"音频数据长度: {len(audio_data)} bytes")
-        
-        # 调用识别 - 传入二进制数据
-        # result = recognition.call(audio_data)
+            logger.info(f"音频数据长度: {len(audio_data)} bytes")
+
         result = recognition.call(temp_filepath)  # ✅ 传入 str
         
         logger.info(f"DashScope API 响应状态: {result.get('status_code', 'unknown')}")
@@ -286,6 +311,297 @@ def health_check():
         'timestamp': os.popen('date').read().strip()
     })
 
+# ============================================================================
+# WebSocket Streaming Implementation
+# ============================================================================
+
+class StreamingRecognitionCallback(RecognitionCallback):
+    """Callback handler for streaming recognition results"""
+
+    def __init__(self, session_id):
+        self.session_id = session_id
+        self.partial_results = []
+        self.final_result = None
+
+    def on_open(self):
+        """Called when recognition stream opens"""
+        logger.info(f"[{self.session_id}] Recognition stream opened")
+        socketio.emit('recognition_opened', {
+            'session_id': self.session_id,
+            'status': 'opened'
+        })
+
+    def on_event(self, result):
+        """Called for each recognition result (partial or final)"""
+        try:
+            logger.info(f"[{self.session_id}] Recognition event received")
+
+            # Extract transcript from result
+            transcript = self._extract_transcript(result)
+
+            if transcript:
+                logger.info(f"[{self.session_id}] 📝 Transcript: {transcript}")
+
+                # Send partial result to client
+                socketio.emit('recognition_result', {
+                    'session_id': self.session_id,
+                    'transcript': transcript,
+                    'is_final': False
+                })
+
+                self.partial_results.append(transcript)
+                self.final_result = transcript
+        except Exception as e:
+            logger.error(f"[{self.session_id}] Error in on_event: {e}")
+            logger.exception(e)
+
+    def on_complete(self):
+        """Called when recognition completes"""
+        logger.info(f"[{self.session_id}] Recognition completed")
+
+        # Send final result
+        final_transcript = self.final_result or ''
+        logger.info(f"[{self.session_id}] ✅ Final transcript: {final_transcript}")
+
+        socketio.emit('recognition_complete', {
+            'session_id': self.session_id,
+            'transcript': final_transcript,
+            'is_final': True
+        })
+
+    def on_error(self, result):
+        """Called on recognition error"""
+        logger.error(f"[{self.session_id}] Recognition error: {result}")
+        socketio.emit('recognition_error', {
+            'session_id': self.session_id,
+            'error': str(result)
+        })
+
+    def on_close(self):
+        """Called when recognition stream closes"""
+        logger.info(f"[{self.session_id}] Recognition stream closed")
+        socketio.emit('recognition_closed', {
+            'session_id': self.session_id,
+            'status': 'closed'
+        })
+
+    def _extract_transcript(self, result):
+        """Extract transcript from recognition result"""
+        try:
+            if not result:
+                return ''
+
+            # For streaming callbacks, result is RecognitionResult object
+            # Try to access output directly
+            output = None
+
+            if hasattr(result, 'output'):
+                output = result.output
+            elif hasattr(result, 'response') and hasattr(result.response, 'output'):
+                output = result.response.output
+            elif isinstance(result, dict):
+                output = result.get('output')
+
+            if not output:
+                logger.warning(f"[{self.session_id}] No output in result: {type(result)}, {dir(result)}")
+                return ''
+
+            # Try different output formats
+            if isinstance(output, dict):
+                # Method 1: output.sentence array (for file-based)
+                if 'sentence' in output:
+                    sentences = output['sentence']
+                    if isinstance(sentences, list):
+                        texts = []
+                        for sentence in sentences:
+                            if isinstance(sentence, dict) and 'text' in sentence:
+                                texts.append(sentence['text'])
+                        if texts:
+                            return ''.join(texts)
+                    elif isinstance(sentences, dict) and 'text' in sentences:
+                        return sentences['text']
+
+                # Method 2: output.text (most common for streaming)
+                if 'text' in output and output['text']:
+                    return output['text']
+
+            # Method 3: output is string
+            if isinstance(output, str):
+                return output
+
+            return ''
+        except Exception as e:
+            logger.error(f"[{self.session_id}] Error extracting transcript: {e}")
+            logger.exception(e)
+            return ''
+
+# Store active recognition sessions
+active_sessions = {}
+sessions_lock = Lock()
+
+@socketio.on('connect')
+def handle_connect():
+    """Handle WebSocket connection"""
+    logger.info(f"Client connected: {request.sid}")
+    emit('connected', {'session_id': request.sid})
+
+@socketio.on('disconnect')
+def handle_disconnect():
+    """Handle WebSocket disconnection"""
+    logger.info(f"Client disconnected: {request.sid}")
+
+    # Clean up any active recognition session
+    with sessions_lock:
+        if request.sid in active_sessions:
+            try:
+                recognition = active_sessions[request.sid]
+                recognition.stop()
+                del active_sessions[request.sid]
+                logger.info(f"Cleaned up recognition session: {request.sid}")
+            except Exception as e:
+                logger.error(f"Error cleaning up session: {e}")
+
+@socketio.on('start_recognition')
+def handle_start_recognition(data=None):
+    """Start a new recognition session"""
+    session_id = request.sid
+    logger.info(f"[{session_id}] Starting recognition session")
+
+    if not DASHSCOPE_API_KEY:
+        emit('recognition_error', {
+            'error': 'DASHSCOPE_API_KEY not configured'
+        })
+        return
+
+    try:
+        with sessions_lock:
+            # Stop any existing session
+            if session_id in active_sessions:
+                try:
+                    active_sessions[session_id].stop()
+                except:
+                    pass
+
+            # Create new recognition instance with callback
+            callback = StreamingRecognitionCallback(session_id)
+            recognition = Recognition(
+                model='paraformer-realtime-v2',
+                format='pcm',
+                sample_rate=16000,
+                callback=callback
+            )
+
+            # Start recognition
+            recognition.start()
+
+            # Initialize counters
+            recognition._audio_frame_count = 0
+            recognition._total_bytes_sent = 0
+
+            # Store session
+            active_sessions[session_id] = recognition
+
+            logger.info(f"[{session_id}] Recognition started successfully")
+            emit('recognition_started', {
+                'session_id': session_id,
+                'status': 'started'
+            })
+
+    except Exception as e:
+        logger.error(f"[{session_id}] Failed to start recognition: {e}")
+        logger.exception(e)
+        emit('recognition_error', {
+            'error': str(e)
+        })
+
+@socketio.on('audio_data')
+def handle_audio_data(data):
+    """Receive and process audio data chunks"""
+    session_id = request.sid
+
+    try:
+        with sessions_lock:
+            if session_id not in active_sessions:
+                logger.warning(f"[{session_id}] No active recognition session")
+                emit('recognition_error', {
+                    'error': 'No active recognition session'
+                })
+                return
+
+            recognition = active_sessions[session_id]
+
+        # data should be Int16Array sent as array of numbers
+        if isinstance(data, dict) and 'audio' in data:
+            # Convert Int16 array to bytes
+            # Int16 values are -32768 to 32767, need to convert to bytes properly
+            int16_array = data['audio']
+
+            # Log first time we receive data
+            if not hasattr(recognition, '_first_data_logged'):
+                logger.info(f"[{session_id}] First audio data received: {len(int16_array)} samples")
+                logger.info(f"[{session_id}] Sample values (first 10): {int16_array[:10]}")
+                recognition._first_data_logged = True
+
+            # Pack as little-endian signed 16-bit integers
+            audio_bytes = struct.pack(f'<{len(int16_array)}h', *int16_array)
+        elif isinstance(data, bytes):
+            audio_bytes = data
+        else:
+            logger.error(f"[{session_id}] Invalid audio data format: {type(data)}")
+            return
+
+        # Send audio frame to DashScope
+        recognition.send_audio_frame(audio_bytes)
+
+        # Update counters
+        recognition._audio_frame_count += 1
+        recognition._total_bytes_sent += len(audio_bytes)
+
+        # Log every 50 frames
+        if recognition._audio_frame_count % 50 == 0:
+            logger.info(f"[{session_id}] Sent {recognition._audio_frame_count} frames, {recognition._total_bytes_sent} bytes total")
+
+        logger.debug(f"[{session_id}] Sent {len(audio_bytes)} bytes to recognition")
+
+    except Exception as e:
+        logger.error(f"[{session_id}] Error processing audio data: {e}")
+        logger.exception(e)
+        emit('recognition_error', {
+            'error': str(e)
+        })
+
+@socketio.on('stop_recognition')
+def handle_stop_recognition(data=None):
+    """Stop the recognition session"""
+    session_id = request.sid
+    logger.info(f"[{session_id}] Stopping recognition session")
+
+    try:
+        with sessions_lock:
+            if session_id in active_sessions:
+                recognition = active_sessions[session_id]
+
+                # Log final stats
+                if hasattr(recognition, '_audio_frame_count'):
+                    logger.info(f"[{session_id}] Final stats: {recognition._audio_frame_count} frames, {recognition._total_bytes_sent} bytes")
+
+                recognition.stop()
+                del active_sessions[session_id]
+                logger.info(f"[{session_id}] Recognition stopped successfully")
+                emit('recognition_stopped', {
+                    'session_id': session_id,
+                    'status': 'stopped'
+                })
+            else:
+                logger.warning(f"[{session_id}] No active session to stop")
+
+    except Exception as e:
+        logger.error(f"[{session_id}] Error stopping recognition: {e}")
+        logger.exception(e)
+        emit('recognition_error', {
+            'error': str(e)
+        })
+
 if __name__ == '__main__':
     print("=" * 60)
     print("🎬 语音交互视频播放器 - Python 版本")
@@ -321,5 +637,5 @@ if __name__ == '__main__':
     print()
     print("=" * 60)
     print()
-    
-    app.run(host='0.0.0.0', port=5001, debug=True)
+
+    socketio.run(app, host='0.0.0.0', port=5001, debug=True, allow_unsafe_werkzeug=True)
