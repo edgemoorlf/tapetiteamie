@@ -272,7 +272,7 @@
     <div class="video-list">
       <h3>📹 可用视频列表</h3>
       <div id="videoListContainer"></div>
-      <div class="preload-info">* 视频会在播放前自动预加载以确保流畅切换</div>
+      <div class="preload-info">* 所有视频已预加载，切换播放更流畅</div>
     </div>
   </div>
 
@@ -842,10 +842,52 @@
 
           this.renderVideoList();
           this.loadVideo(0);
+
+          // Preload ALL videos for smooth switching
+          this.updateStatus(`正在预加载 ${this.videos.length} 个视频...`);
+          await this.preloadAllVideos();
+
           this.updateStatus(`已加载 ${this.videos.length} 个视频 (流式识别模式)`);
         } catch (error) {
           this.updateStatus('加载视频列表失败: ' + error.message);
         }
+      }
+
+      async preloadAllVideos() {
+        console.log(`Preloading ${this.videos.length} videos...`);
+
+        const preloadPromises = this.videos.map((video, index) => {
+          return new Promise((resolve) => {
+            const videoElement = document.createElement('video');
+            videoElement.preload = 'auto';
+            videoElement.src = video.url;
+
+            // Store the URL for quick access
+            this.preloadedVideos.set(index, video.url);
+
+            // Listen for when enough data is loaded
+            videoElement.addEventListener('canplaythrough', () => {
+              console.log(`✅ Preloaded video ${index + 1}/${this.videos.length}: ${video.name}`);
+              resolve();
+            }, { once: true });
+
+            // Also resolve on error to not block other videos
+            videoElement.addEventListener('error', (e) => {
+              console.warn(`⚠️ Failed to preload video ${index + 1}: ${video.name}`, e);
+              resolve();
+            }, { once: true });
+
+            // Timeout after 10 seconds per video
+            setTimeout(() => {
+              console.log(`⏱️ Preload timeout for video ${index + 1}: ${video.name}`);
+              resolve();
+            }, 10000);
+          });
+        });
+
+        // Wait for all videos to preload (or timeout)
+        await Promise.all(preloadPromises);
+        console.log('✅ All videos preloaded!');
       }
 
       renderVideoList() {
@@ -868,39 +910,24 @@
         this.currentIndex = index;
         const video = this.videos[index];
 
-        if (this.preloadedVideos.has(index)) {
-          this.mainVideo.src = this.preloadedVideos.get(index);
-        } else {
-          this.mainVideo.src = video.url;
-        }
-
+        // Use preloaded video URL (all videos are preloaded now)
+        this.mainVideo.src = video.url;
         this.mainVideo.load();
+
         this.updateVideoListUI();
         this.updateStatus(`正在播放: ${video.name}`);
 
-        this.preloadNextVideos();
+        console.log(`Loading video ${index + 1}: ${video.name} (preloaded: ${this.preloadedVideos.has(index)})`);
       }
 
       preloadNextVideos() {
-        for (let i = 1; i <= 2; i++) {
-          const nextIndex = (this.currentIndex + i) % this.videos.length;
-          if (!this.preloadedVideos.has(nextIndex)) {
-            this.preloadVideo(nextIndex);
-          }
-        }
+        // No longer needed - all videos are preloaded at startup
+        // Keeping this method for compatibility
       }
 
       preloadVideo(index) {
-        if (index < 0 || index >= this.videos.length) return;
-
-        const video = this.videos[index];
-        const preloadVideo = document.createElement('video');
-        preloadVideo.preload = 'auto';
-        preloadVideo.src = video.url;
-
-        this.preloadedVideos.set(index, video.url);
-
-        console.log(`预加载视频 ${index + 1}: ${video.name}`);
+        // No longer needed - all videos are preloaded at startup
+        // Keeping this method for compatibility
       }
 
       updateVideoListUI() {
