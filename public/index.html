@@ -958,6 +958,10 @@
         this.preloadedVideos = new Map();
         this.isListening = false;
 
+        // Hot words
+        this.hotWords = [];
+        this.hotWordsEnabled = false;
+
         // Recognition mode: 'dashscope' or 'browser'
         this.recognitionMode = 'dashscope';
 
@@ -983,6 +987,7 @@
 
       async init() {
         await this.loadVideos();
+        await this.loadHotWords();
         this.setupEventListeners();
         this.preloadNextVideos();
         this.initWebSocket();
@@ -1151,6 +1156,29 @@
           this.updateStatus(`已加载 ${this.videos.length} 个视频 (流式识别模式)`);
         } catch (error) {
           this.updateStatus('加载视频列表失败: ' + error.message);
+        }
+      }
+
+      async loadHotWords() {
+        try {
+          const response = await fetch('/api/hot-words');
+          const hotWordsData = await response.json();
+
+          this.hotWords = hotWordsData.hotWords || [];
+          this.hotWordsEnabled = hotWordsData.settings?.enabled !== false;
+
+          if (this.hotWords.length > 0) {
+            console.log(`✅ Loaded ${this.hotWords.length} hot words`);
+            this.hotWords.forEach(hw => {
+              console.log(`   - ${hw.word} (weight: ${hw.weight})`);
+            });
+          } else {
+            console.log('⚠️ No hot words configured');
+          }
+        } catch (error) {
+          console.warn('Failed to load hot words:', error.message);
+          this.hotWords = [];
+          this.hotWordsEnabled = false;
         }
       }
 

@@ -1,0 +1,130 @@
+{
+  "hotWords": [
+    {
+      "word": "第一个",
+      "pinyin": "dì yī gè",
+      "weight": 10,
+      "description": "Number one"
+    },
+    {
+      "word": "第二个",
+      "pinyin": "dì èr gè",
+      "weight": 10,
+      "description": "Number two"
+    },
+    {
+      "word": "第三个",
+      "pinyin": "dì sān gè",
+      "weight": 10,
+      "description": "Number three"
+    },
+    {
+      "word": "第四个",
+      "pinyin": "dì sì gè",
+      "weight": 10,
+      "description": "Number four"
+    },
+    {
+      "word": "第五个",
+      "pinyin": "dì wǔ gè",
+      "weight": 10,
+      "description": "Number five"
+    },
+    {
+      "word": "第六个",
+      "pinyin": "dì liù gè",
+      "weight": 10,
+      "description": "Number six"
+    },
+    {
+      "word": "第七个",
+      "pinyin": "dì qī gè",
+      "weight": 10,
+      "description": "Number seven"
+    },
+    {
+      "word": "第八个",
+      "pinyin": "dì bā gè",
+      "weight": 10,
+      "description": "Number eight"
+    },
+    {
+      "word": "第九个",
+      "pinyin": "dì jiǔ gè",
+      "weight": 10,
+      "description": "Number night"
+    },
+    {
+      "word": "神经病",
+      "pinyin": "shén jīn bìng",
+      "weight": 10,
+      "description": "mind disorder"
+    },
+    {
+      "word": "你有问题",
+      "pinyin": "nǐ yoǔ wèn tí",
+      "weight": 10,
+      "description": "something wrong with you"
+    },
+    {
+      "word": "写",
+      "pinyin": "xiě",
+      "weight": 10,
+      "description": "write"
+    },
+    {
+      "word": "可以",
+      "pinyin": "kě yǐ",
+      "weight": 10,
+      "description": "OK"
+    },
+    {
+      "word": "商量",
+      "pinyin": "shāng lìang",
+      "weight": 10,
+      "description": "negotiate"
+    },
+    {
+      "word": "播放",
+      "pinyin": "bō fàng",
+      "weight": 8,
+      "description": "Play command"
+    },
+    {
+      "word": "视频",
+      "pinyin": "shì pín",
+      "weight": 8,
+      "description": "Video reference"
+    },
+    {
+      "word": "下一个",
+      "pinyin": "xià yī gè",
+      "weight": 8,
+      "description": "Next video"
+    },
+    {
+      "word": "上一个",
+      "pinyin": "shàng yī gè",
+      "weight": 8,
+      "description": "Previous video"
+    },
+    {
+      "word": "暂停",
+      "pinyin": "zàn tíng",
+      "weight": 8,
+      "description": "Pause command"
+    },
+    {
+      "word": "继续",
+      "pinyin": "jì xù",
+      "weight": 8,
+      "description": "Resume command"
+    }
+  ],
+  "settings": {
+    "enabled": true,
+    "minConfidence": 0.5,
+    "maxHotWords": 20,
+    "description": "Hot words configuration for voice recognition"
+  }
+}

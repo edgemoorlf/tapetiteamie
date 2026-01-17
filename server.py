@@ -38,6 +38,30 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(TEMP_AUDIO_FOLDER, exist_ok=True)
 os.makedirs('public', exist_ok=True)
 
+# Load hot words configuration
+HOT_WORDS_FILE = 'hot_words.json'
+HOT_WORDS = {}
+
+def load_hot_words():
+    """Load hot words from configuration file"""
+    global HOT_WORDS
+    try:
+        if os.path.exists(HOT_WORDS_FILE):
+            with open(HOT_WORDS_FILE, 'r', encoding='utf-8') as f:
+                HOT_WORDS = json.load(f)
+                logger.info(f"✅ Loaded {len(HOT_WORDS.get('hotWords', []))} hot words")
+                for hw in HOT_WORDS.get('hotWords', []):
+                    logger.info(f"   - {hw['word']} (weight: {hw['weight']})")
+        else:
+            logger.warning(f"Hot words file not found: {HOT_WORDS_FILE}")
+            HOT_WORDS = {'hotWords': [], 'settings': {'enabled': False}}
+    except Exception as e:
+        logger.error(f"Failed to load hot words: {e}")
+        HOT_WORDS = {'hotWords': [], 'settings': {'enabled': False}}
+
+# Load hot words on startup
+load_hot_words()
+
 def allowed_file(filename, allowed_extensions):
     return '.' in filename and \
            filename.rsplit('.', 1)[1].lower() in allowed_extensions
@@ -311,6 +335,43 @@ def health_check():
         'sdkVersion': dashscope.__version__ if hasattr(dashscope, '__version__') else 'unknown',
         'timestamp': os.popen('date').read().strip()
     })
+
+@app.route('/api/hot-words', methods=['GET'])
+def get_hot_words():
+    """Get hot words configuration for voice recognition"""
+    try:
+        return jsonify(HOT_WORDS)
+    except Exception as e:
+        logger.error(f"Failed to get hot words: {e}")
+        return jsonify({'error': str(e), 'hotWords': [], 'settings': {'enabled': False}}), 500
+
+@app.route('/api/hot-words', methods=['POST'])
+def update_hot_words():
+    """Update hot words configuration"""
+    try:
+        global HOT_WORDS
+        data = request.json
+
+        # Validate hot words structure
+        if 'hotWords' not in data:
+            return jsonify({'error': 'Missing hotWords field'}), 400
+
+        HOT_WORDS = data
+
+        # Save to file
+        with open(HOT_WORDS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(HOT_WORDS, f, ensure_ascii=False, indent=2)
+
+        logger.info(f"✅ Updated hot words: {len(HOT_WORDS.get('hotWords', []))} words")
+
+        return jsonify({
+            'status': 'success',
+            'message': f'Updated {len(HOT_WORDS.get("hotWords", []))} hot words',
+            'hotWords': HOT_WORDS
+        })
+    except Exception as e:
+        logger.error(f"Failed to update hot words: {e}")
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/llm-match', methods=['POST'])
 def llm_match():
@@ -601,12 +662,31 @@ def handle_start_recognition(data=None):
 
             # Create new recognition instance with callback
             callback = StreamingRecognitionCallback(session_id)
-            recognition = Recognition(
-                model='paraformer-realtime-v2',
-                format='pcm',
-                sample_rate=16000,
-                callback=callback
-            )
+
+            # Build hot words list for DashScope
+            hot_words_list = []
+            if HOT_WORDS.get('settings', {}).get('enabled', True):
+                for hw in HOT_WORDS.get('hotWords', []):
+                    hot_words_list.append({
+                        'word': hw['word'],
+                        'weight': hw.get('weight', 5)
+                    })
+
+            logger.info(f"[{session_id}] Using {len(hot_words_list)} hot words")
+
+            # Create recognition with hot words
+            recognition_kwargs = {
+                'model': 'paraformer-realtime-v2',
+                'format': 'pcm',
+                'sample_rate': 16000,
+                'callback': callback
+            }
+
+            # Add hot words if available
+            if hot_words_list:
+                recognition_kwargs['hot_words'] = hot_words_list
+
+            recognition = Recognition(**recognition_kwargs)
 
             # Start recognition
             recognition.start()
