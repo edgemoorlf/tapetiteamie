@@ -991,7 +991,14 @@
 
       initWebSocket() {
         // Connect to WebSocket server for DashScope
-        this.socket = io('http://localhost:5001');
+        // Use current host and port dynamically
+        const protocol = window.location.protocol === 'https:' ? 'https:' : 'http:';
+        const host = window.location.hostname;
+        const port = window.location.port || (protocol === 'https:' ? '443' : '80');
+        const socketUrl = `${protocol}//${host}:${port}`;
+
+        console.log('Connecting to WebSocket:', socketUrl);
+        this.socket = io(socketUrl);
 
         this.socket.on('connected', (data) => {
           console.log('WebSocket connected:', data);
