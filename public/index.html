@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>语音交互视频播放器 (Streaming)</title>
+  <title>语音交互视频</title>
   <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
   <style>
     * {
@@ -240,11 +240,282 @@
       color: #999;
       margin-top: 5px;
     }
+
+    /* Mobile Responsive Styles */
+    @media (max-width: 768px) {
+      body {
+        padding: 10px;
+        align-items: flex-start;
+      }
+
+      .container {
+        padding: 15px;
+        border-radius: 15px;
+        max-width: 100%;
+      }
+
+      h1 {
+        font-size: 1.5em;
+        margin-bottom: 15px;
+      }
+
+      .video-container {
+        border-radius: 10px;
+        margin-bottom: 15px;
+      }
+
+      .voice-prompt {
+        padding: 20px 25px;
+        border-radius: 10px;
+      }
+
+      .mic-icon {
+        font-size: 36px;
+        margin-bottom: 10px;
+      }
+
+      .controls {
+        gap: 10px;
+        margin-bottom: 15px;
+      }
+
+      button {
+        padding: 14px 20px;
+        font-size: 15px;
+        min-width: 100px;
+        border-radius: 8px;
+        /* Larger tap targets for mobile */
+        min-height: 48px;
+      }
+
+      .mode-toggle {
+        font-size: 13px;
+        min-width: 140px;
+      }
+
+      .transcript-log {
+        margin-top: 15px;
+        padding: 12px;
+        max-height: 150px;
+        border-radius: 8px;
+      }
+
+      .transcript-log h3 {
+        font-size: 1em;
+        margin-bottom: 8px;
+      }
+
+      .transcript-content {
+        font-size: 12px;
+      }
+
+      .transcript-entry {
+        padding: 6px;
+        margin-bottom: 6px;
+      }
+
+      .video-list {
+        margin-top: 15px;
+      }
+
+      .video-list h3 {
+        font-size: 1em;
+        margin-bottom: 10px;
+      }
+
+      .video-item {
+        padding: 10px;
+        margin-bottom: 6px;
+        border-radius: 6px;
+        font-size: 14px;
+      }
+
+      .status {
+        padding: 12px;
+        margin-top: 12px;
+        font-size: 14px;
+        border-radius: 8px;
+      }
+
+      .preload-info {
+        font-size: 11px;
+      }
+    }
+
+    /* Extra small mobile devices */
+    @media (max-width: 480px) {
+      body {
+        padding: 5px;
+      }
+
+      .container {
+        padding: 10px;
+        border-radius: 10px;
+      }
+
+      h1 {
+        font-size: 1.3em;
+        margin-bottom: 12px;
+      }
+
+      .controls {
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      button {
+        width: 100%;
+        min-width: auto;
+      }
+
+      .transcript-log {
+        max-height: 120px;
+        padding: 10px;
+      }
+
+      .transcript-content {
+        font-size: 11px;
+      }
+
+      .video-item {
+        font-size: 13px;
+        padding: 8px;
+      }
+    }
+
+    /* Fullscreen Mode Styles */
+    .fullscreen-mode {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      background: #000;
+      z-index: 9999;
+      display: none;
+    }
+
+    .fullscreen-mode.active {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+    }
+
+    .fullscreen-mode video {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+    }
+
+    .fullscreen-controls {
+      position: absolute;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 15px;
+      z-index: 10000;
+      opacity: 0;
+      transition: opacity 0.3s ease;
+    }
+
+    .fullscreen-mode:hover .fullscreen-controls,
+    .fullscreen-controls.visible {
+      opacity: 1;
+    }
+
+    .fullscreen-controls button {
+      padding: 15px 25px;
+      font-size: 18px;
+      border-radius: 50px;
+      background: rgba(255, 255, 255, 0.2);
+      backdrop-filter: blur(10px);
+      color: white;
+      border: 2px solid rgba(255, 255, 255, 0.3);
+      cursor: pointer;
+      transition: all 0.3s ease;
+      min-height: 56px;
+      min-width: 56px;
+    }
+
+    .fullscreen-controls button:active {
+      background: rgba(255, 255, 255, 0.4);
+      transform: scale(0.95);
+    }
+
+    .fullscreen-controls button.listening {
+      background: rgba(255, 59, 48, 0.8);
+      border-color: rgba(255, 59, 48, 1);
+      animation: pulse-red 1.5s infinite;
+    }
+
+    @keyframes pulse-red {
+      0%, 100% {
+        box-shadow: 0 0 0 0 rgba(255, 59, 48, 0.7);
+      }
+      50% {
+        box-shadow: 0 0 0 15px rgba(255, 59, 48, 0);
+      }
+    }
+
+    .fullscreen-status {
+      position: absolute;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0, 0, 0, 0.7);
+      backdrop-filter: blur(10px);
+      color: white;
+      padding: 12px 24px;
+      border-radius: 25px;
+      font-size: 16px;
+      z-index: 10000;
+      opacity: 0;
+      transition: opacity 0.3s ease;
+    }
+
+    .fullscreen-status.visible {
+      opacity: 1;
+    }
+
+    .fullscreen-transcript {
+      position: absolute;
+      bottom: 100px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0, 0, 0, 0.8);
+      backdrop-filter: blur(10px);
+      color: white;
+      padding: 15px 30px;
+      border-radius: 15px;
+      font-size: 18px;
+      max-width: 80%;
+      text-align: center;
+      z-index: 10000;
+      opacity: 0;
+      transition: opacity 0.3s ease;
+    }
+
+    .fullscreen-transcript.visible {
+      opacity: 1;
+    }
+
+    /* Landscape orientation specific styles */
+    @media (orientation: landscape) and (max-width: 926px) {
+      body.auto-fullscreen .container {
+        display: none;
+      }
+
+      body.auto-fullscreen .fullscreen-mode {
+        display: flex;
+      }
+    }
   </style>
 </head>
 <body>
   <div class="container">
-    <h1>🎬 语音交互视频播放器</h1>
+    <h1>🎬 语音交互视频</h1>
     
     <div class="video-container">
       <video id="mainVideo" preload="auto"></video>
@@ -273,6 +544,22 @@
       <h3>📹 可用视频列表</h3>
       <div id="videoListContainer"></div>
       <div class="preload-info">* 所有视频已预加载，切换播放更流畅</div>
+    </div>
+  </div>
+
+  <!-- Fullscreen Mode Container -->
+  <div id="fullscreenMode" class="fullscreen-mode">
+    <video id="fullscreenVideo" preload="auto"></video>
+
+    <div id="fullscreenStatus" class="fullscreen-status">准备就绪</div>
+
+    <div id="fullscreenTranscript" class="fullscreen-transcript"></div>
+
+    <div class="fullscreen-controls">
+      <button id="fsPlayBtn">▶</button>
+      <button id="fsPauseBtn">⏸</button>
+      <button id="fsVoiceBtn">🎤</button>
+      <button id="fsExitBtn">✕</button>
     </div>
   </div>
 
@@ -659,6 +946,13 @@
         this.videoListContainer = document.getElementById('videoListContainer');
         this.transcriptLog = document.getElementById('transcriptLog');
 
+        // Fullscreen elements
+        this.fullscreenMode = document.getElementById('fullscreenMode');
+        this.fullscreenVideo = document.getElementById('fullscreenVideo');
+        this.fullscreenStatus = document.getElementById('fullscreenStatus');
+        this.fullscreenTranscript = document.getElementById('fullscreenTranscript');
+        this.isFullscreen = false;
+
         this.videos = [];
         this.currentIndex = 0;
         this.preloadedVideos = new Map();
@@ -910,9 +1204,12 @@
         this.currentIndex = index;
         const video = this.videos[index];
 
-        // Use preloaded video URL (all videos are preloaded now)
+        // Update both video elements
         this.mainVideo.src = video.url;
         this.mainVideo.load();
+
+        this.fullscreenVideo.src = video.url;
+        this.fullscreenVideo.load();
 
         this.updateVideoListUI();
         this.updateStatus(`正在播放: ${video.name}`);
@@ -959,6 +1256,51 @@
         document.getElementById('toggleModeBtn').addEventListener('click', () => {
           this.toggleRecognitionMode();
         });
+
+        // Fullscreen controls
+        document.getElementById('fsPlayBtn').addEventListener('click', () => {
+          this.getActiveVideo().play();
+        });
+
+        document.getElementById('fsPauseBtn').addEventListener('click', () => {
+          this.getActiveVideo().pause();
+        });
+
+        document.getElementById('fsVoiceBtn').addEventListener('click', () => {
+          this.startVoiceRecognition();
+        });
+
+        document.getElementById('fsExitBtn').addEventListener('click', () => {
+          this.exitFullscreen();
+        });
+
+        // Orientation change detection
+        window.addEventListener('orientationchange', () => {
+          this.handleOrientationChange();
+        });
+
+        // Also listen to resize for better responsiveness
+        window.addEventListener('resize', () => {
+          this.handleOrientationChange();
+        });
+
+        // Show/hide fullscreen controls on interaction
+        this.fullscreenMode.addEventListener('click', () => {
+          this.toggleFullscreenControls();
+        });
+
+        // Keep controls visible while interacting
+        const fsControls = document.querySelector('.fullscreen-controls');
+        fsControls.addEventListener('mouseenter', () => {
+          fsControls.classList.add('visible');
+        });
+        fsControls.addEventListener('mouseleave', () => {
+          setTimeout(() => {
+            if (!this.isListening) {
+              fsControls.classList.remove('visible');
+            }
+          }, 3000);
+        });
       }
 
       showVoicePrompt() {
@@ -971,6 +1313,13 @@
 
       async startVoiceRecognition() {
         if (this.isListening) return;
+
+        // Update fullscreen voice button state
+        if (this.isFullscreen) {
+          const fsVoiceBtn = document.getElementById('fsVoiceBtn');
+          fsVoiceBtn.classList.add('listening');
+          this.showFullscreenControls();
+        }
 
         if (this.recognitionMode === 'browser') {
           this.startBrowserRecognition();
@@ -1087,6 +1436,12 @@
         this.isListening = false;
         this.updateStatus('🔄 正在处理语音...', 'processing');
 
+        // Update fullscreen voice button state
+        if (this.isFullscreen) {
+          const fsVoiceBtn = document.getElementById('fsVoiceBtn');
+          fsVoiceBtn.classList.remove('listening');
+        }
+
         if (this.recognitionMode === 'browser') {
           // Stop browser recognition
           if (this.browserRecognition) {
@@ -1170,6 +1525,11 @@
         const cleanTranscript = transcript.trim().toLowerCase();
         this.updateStatus(`✅ 识别结果: "${cleanTranscript}"`);
 
+        // Show transcript in fullscreen mode
+        if (this.isFullscreen) {
+          this.showFullscreenTranscript(`识别: "${cleanTranscript}"`);
+        }
+
         // Use VideoMatcher to find best match (now async)
         const match = await this.videoMatcher.findMatch(cleanTranscript, this.videos, {
           currentIndex: this.currentIndex
@@ -1189,7 +1549,7 @@
 
           setTimeout(() => {
             this.loadVideo(match.index);
-            this.mainVideo.play();
+            this.getActiveVideo().play();
           }, 1000);
         } else {
           this.logTranscript('匹配结果', '未找到匹配，播放下一个', this.recognitionMode);
@@ -1203,12 +1563,174 @@
       playNext() {
         const nextIndex = (this.currentIndex + 1) % this.videos.length;
         this.loadVideo(nextIndex);
-        this.mainVideo.play();
+        this.getActiveVideo().play();
       }
 
       updateStatus(message, className = '') {
         this.status.textContent = message;
         this.status.className = 'status ' + className;
+
+        // Also update fullscreen status
+        if (this.isFullscreen) {
+          this.updateFullscreenStatus(message);
+        }
+      }
+
+      // ============================================================================
+      // Fullscreen Mode Methods
+      // ============================================================================
+
+      /**
+       * Get the currently active video element (main or fullscreen)
+       */
+      getActiveVideo() {
+        return this.isFullscreen ? this.fullscreenVideo : this.mainVideo;
+      }
+
+      /**
+       * Handle orientation changes
+       */
+      handleOrientationChange() {
+        // Check if device is in landscape mode
+        const isLandscape = window.matchMedia('(orientation: landscape)').matches;
+        const isMobile = window.matchMedia('(max-width: 926px)').matches;
+
+        if (isLandscape && isMobile) {
+          // Enter fullscreen mode
+          this.enterFullscreen();
+        } else if (!isLandscape && this.isFullscreen) {
+          // Exit fullscreen mode when returning to portrait
+          this.exitFullscreen();
+        }
+      }
+
+      /**
+       * Enter fullscreen mode
+       */
+      enterFullscreen() {
+        if (this.isFullscreen) return;
+
+        console.log('Entering fullscreen mode');
+
+        // Sync video state from main to fullscreen
+        this.fullscreenVideo.src = this.mainVideo.src;
+        this.fullscreenVideo.currentTime = this.mainVideo.currentTime;
+
+        if (!this.mainVideo.paused) {
+          this.fullscreenVideo.play();
+        }
+
+        // Pause main video
+        this.mainVideo.pause();
+
+        // Show fullscreen mode
+        this.fullscreenMode.classList.add('active');
+        document.body.classList.add('auto-fullscreen');
+        this.isFullscreen = true;
+
+        // Show controls briefly
+        this.showFullscreenControls();
+
+        // Request native fullscreen API if available
+        if (this.fullscreenMode.requestFullscreen) {
+          this.fullscreenMode.requestFullscreen().catch(err => {
+            console.log('Fullscreen API not available:', err);
+          });
+        }
+
+        console.log('Fullscreen mode active');
+      }
+
+      /**
+       * Exit fullscreen mode
+       */
+      exitFullscreen() {
+        if (!this.isFullscreen) return;
+
+        console.log('Exiting fullscreen mode');
+
+        // Sync video state from fullscreen to main
+        this.mainVideo.src = this.fullscreenVideo.src;
+        this.mainVideo.currentTime = this.fullscreenVideo.currentTime;
+
+        if (!this.fullscreenVideo.paused) {
+          this.mainVideo.play();
+        }
+
+        // Pause fullscreen video
+        this.fullscreenVideo.pause();
+
+        // Hide fullscreen mode
+        this.fullscreenMode.classList.remove('active');
+        document.body.classList.remove('auto-fullscreen');
+        this.isFullscreen = false;
+
+        // Exit native fullscreen if active
+        if (document.fullscreenElement) {
+          document.exitFullscreen().catch(err => {
+            console.log('Error exiting fullscreen:', err);
+          });
+        }
+
+        console.log('Fullscreen mode exited');
+      }
+
+      /**
+       * Toggle fullscreen controls visibility
+       */
+      toggleFullscreenControls() {
+        const controls = document.querySelector('.fullscreen-controls');
+        controls.classList.toggle('visible');
+
+        // Auto-hide after 3 seconds if not listening
+        if (controls.classList.contains('visible') && !this.isListening) {
+          setTimeout(() => {
+            if (!this.isListening) {
+              controls.classList.remove('visible');
+            }
+          }, 3000);
+        }
+      }
+
+      /**
+       * Show fullscreen controls
+       */
+      showFullscreenControls() {
+        const controls = document.querySelector('.fullscreen-controls');
+        controls.classList.add('visible');
+
+        // Auto-hide after 3 seconds
+        setTimeout(() => {
+          if (!this.isListening) {
+            controls.classList.remove('visible');
+          }
+        }, 3000);
+      }
+
+      /**
+       * Update fullscreen status message
+       */
+      updateFullscreenStatus(message) {
+        this.fullscreenStatus.textContent = message;
+        this.fullscreenStatus.classList.add('visible');
+
+        // Auto-hide after 3 seconds
+        setTimeout(() => {
+          this.fullscreenStatus.classList.remove('visible');
+        }, 3000);
+      }
+
+      /**
+       * Show transcript in fullscreen mode
+       */
+      showFullscreenTranscript(text) {
+        this.fullscreenTranscript.textContent = text;
+        this.fullscreenTranscript.classList.add('visible');
+
+        // Auto-hide after 5 seconds
+        setTimeout(() => {
+          this.fullscreenTranscript.classList.remove('visible');
+        }, 5000);
       }
     }
 
