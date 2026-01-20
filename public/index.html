@@ -797,6 +797,87 @@
     }
 
     /**
+     * Strategy 5: Match by operational keywords (next, pause, previous, etc.)
+     */
+    class OperationalKeywordsStrategy extends VideoMatchStrategy {
+      constructor() {
+        super('Operational Keywords', 90); // HIGH priority - check before LLM
+      }
+
+      match(transcript, videos, context) {
+        const cleanTranscript = transcript.toLowerCase().trim();
+
+        // Define operational keywords and their actions
+        const operationalKeywords = {
+          // Next video
+          next: ['下一个', '下一个视频', 'next', 'next video', '下一个视频', '播放下一个'],
+          // Previous video
+          previous: ['上一个', '上一个视频', 'previous', 'previous video', '上一个视频', '播放上一个'],
+          // Pause
+          pause: ['暂停', 'pause', '停止', 'stop'],
+          // Play/Resume
+          play: ['播放', 'play', '继续', 'resume', '开始'],
+          // Replay/Restart
+          replay: ['重新播放', 'replay', '重新开始', 'restart', '从头开始']
+        };
+
+        // Check for operational keywords
+        for (const [action, keywords] of Object.entries(operationalKeywords)) {
+          for (const keyword of keywords) {
+            if (cleanTranscript.includes(keyword)) {
+              console.log(`[OperationalKeywords] Matched action: ${action} (keyword: "${keyword}")`);
+
+              // Handle the action
+              switch (action) {
+                case 'next':
+                  return {
+                    index: -1, // Special index for next
+                    confidence: 0.95,
+                    reason: `Operational: Next video`,
+                    action: 'next'
+                  };
+
+                case 'previous':
+                  return {
+                    index: -2, // Special index for previous
+                    confidence: 0.95,
+                    reason: `Operational: Previous video`,
+                    action: 'previous'
+                  };
+
+                case 'pause':
+                  return {
+                    index: -3, // Special index for pause
+                    confidence: 0.95,
+                    reason: `Operational: Pause`,
+                    action: 'pause'
+                  };
+
+                case 'play':
+                  return {
+                    index: -4, // Special index for play
+                    confidence: 0.95,
+                    reason: `Operational: Play/Resume`,
+                    action: 'play'
+                  };
+
+                case 'replay':
+                  return {
+                    index: -5, // Special index for replay
+                    confidence: 0.95,
+                    reason: `Operational: Replay`,
+                    action: 'replay'
+                  };
+              }
+            }
+          }
+        }
+
+        return null; // No operational keyword matched
+      }
+    }
+
+    /**
      * Video Matcher - Coordinates all matching strategies
      */
     class VideoMatcher {
@@ -977,10 +1058,11 @@
         // Initialize video matcher with strategies
         // Priority order: Fast strategies first, LLM as fallback
         this.videoMatcher = new VideoMatcher();
-        this.videoMatcher.addStrategy(new FilenameMatchStrategy());        // Priority: 80
-        this.videoMatcher.addStrategy(new NumericMatchStrategy());         // Priority: 70
-        this.videoMatcher.addStrategy(new TranscriptMatchStrategy());      // Priority: 50
-        this.videoMatcher.addStrategy(new LLMConversationalMatchStrategy()); // Priority: 10 (fallback)
+        this.videoMatcher.addStrategy(new OperationalKeywordsStrategy());      // Priority: 90 (operational commands)
+        this.videoMatcher.addStrategy(new FilenameMatchStrategy());            // Priority: 80
+        this.videoMatcher.addStrategy(new NumericMatchStrategy());             // Priority: 70
+        this.videoMatcher.addStrategy(new TranscriptMatchStrategy());          // Priority: 50
+        this.videoMatcher.addStrategy(new LLMConversationalMatchStrategy());   // Priority: 10 (fallback)
 
         this.init();
       }
@@ -1571,21 +1653,56 @@
         });
 
         if (match) {
-          // Log match details
-          this.logTranscript(
-            '匹配结果',
-            `视频 #${match.index + 1} (${match.strategy}, 置信度: ${(match.confidence * 100).toFixed(1)}%)`,
-            this.recognitionMode
-          );
+          // Check if this is an operational action
+          if (match.action) {
+            this.logTranscript(
+              '操作命令',
+              `${match.reason}`,
+              this.recognitionMode
+            );
 
-          this.updateStatus(
-            `✅ 匹配到视频 #${match.index + 1}: ${this.videos[match.index].name} (${(match.confidence * 100).toFixed(1)}% 置信度)`
-          );
+            this.updateStatus(`✅ ${match.reason}`);
 
-          setTimeout(() => {
-            this.loadVideo(match.index);
-            this.getActiveVideo().play();
-          }, 1000);
+            // Handle operational actions
+            switch (match.action) {
+              case 'next':
+                setTimeout(() => this.playNext(), 500);
+                break;
+
+              case 'previous':
+                setTimeout(() => this.playPrevious(), 500);
+                break;
+
+              case 'pause':
+                this.getActiveVideo().pause();
+                break;
+
+              case 'play':
+                this.getActiveVideo().play();
+                break;
+
+              case 'replay':
+                this.getActiveVideo().currentTime = 0;
+                this.getActiveVideo().play();
+                break;
+            }
+          } else {
+            // Regular video match
+            this.logTranscript(
+              '匹配结果',
+              `视频 #${match.index + 1} (${match.strategy}, 置信度: ${(match.confidence * 100).toFixed(1)}%)`,
+              this.recognitionMode
+            );
+
+            this.updateStatus(
+              `✅ 匹配到视频 #${match.index + 1}: ${this.videos[match.index].name} (${(match.confidence * 100).toFixed(1)}% 置信度)`
+            );
+
+            setTimeout(() => {
+              this.loadVideo(match.index);
+              this.getActiveVideo().play();
+            }, 1000);
+          }
         } else {
           this.logTranscript('匹配结果', '未找到匹配，播放下一个', this.recognitionMode);
           this.updateStatus(`未找到匹配的视频 "${cleanTranscript}"，播放下一个`);
@@ -1598,6 +1715,12 @@
       playNext() {
         const nextIndex = (this.currentIndex + 1) % this.videos.length;
         this.loadVideo(nextIndex);
+        this.getActiveVideo().play();
+      }
+
+      playPrevious() {
+        const previousIndex = (this.currentIndex - 1 + this.videos.length) % this.videos.length;
+        this.loadVideo(previousIndex);
         this.getActiveVideo().play();
       }
 
