@@ -1,3 +1,18 @@
+"""
+HTTPS-enabled version of the server for production deployment.
+
+Usage:
+1. Generate self-signed certificate (for testing):
+   openssl req -x509 -newkey rsa:4096 -nodes -out cert.pem -keyout key.pem -days 365
+
+2. Or use Let's Encrypt certificates (for production):
+   sudo certbot certonly --standalone -d yourdomain.com
+   # Certificates will be in /etc/letsencrypt/live/yourdomain.com/
+
+3. Run the server:
+   python server_https.py
+"""
+
 import os
 import json
 import struct
@@ -12,11 +27,12 @@ from dotenv import load_dotenv
 import tempfile
 import logging
 from threading import Lock
+import ssl
 
-# 加载环境变量
+# Load environment variables
 load_dotenv()
 
-# 配置日志
+# Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -24,7 +40,7 @@ app = Flask(__name__, static_folder='public', static_url_path='')
 CORS(app)
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 
-# 配置
+# Configuration
 DASHSCOPE_API_KEY = os.getenv('DASHSCOPE_API_KEY')
 dashscope.api_key = DASHSCOPE_API_KEY
 
@@ -33,7 +49,12 @@ TEMP_AUDIO_FOLDER = 'temp_audio'
 ALLOWED_VIDEO_EXTENSIONS = {'mp4', 'avi', 'mov'}
 ALLOWED_AUDIO_EXTENSIONS = {'webm', 'wav', 'mp3', 'pcm'}
 
-# 创建必要的目录
+# SSL Configuration
+SSL_CERT_PATH = os.getenv('SSL_CERT_PATH', 'cert.pem')
+SSL_KEY_PATH = os.getenv('SSL_KEY_PATH', 'key.pem')
+USE_SSL = os.getenv('USE_SSL', 'false').lower() == 'true'
+
+# Create necessary directories
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(TEMP_AUDIO_FOLDER, exist_ok=True)
 os.makedirs('public', exist_ok=True)
@@ -72,7 +93,7 @@ def index():
 
 @app.route('/api/videos', methods=['GET'])
 def get_videos():
-    """获取所有视频列表及其字幕"""
+    """Get all videos with transcripts"""
     try:
         if not os.path.exists(UPLOAD_FOLDER):
             return jsonify([])
@@ -85,7 +106,7 @@ def get_videos():
                     'url': f'/videos/{filename}'
                 }
 
-                # Check for transcript file (.txt with same name)
+                # Check for transcript file
                 transcript_path = os.path.join(UPLOAD_FOLDER, filename.replace('.mp4', '.txt'))
                 if os.path.exists(transcript_path):
                     try:
@@ -101,277 +122,31 @@ def get_videos():
         def sort_key(video):
             name = video['name'].lower()
             if name == 'introduction.mp4':
-                return (0, '')  # First priority
+                return (0, '')
             else:
-                return (1, name)  # Alphabetical order
+                return (1, name)
 
         videos.sort(key=sort_key)
-
         logger.info(f"Loaded {len(videos)} videos in order: {[v['name'] for v in videos]}")
 
         return jsonify(videos)
     except Exception as e:
-        logger.error(f"获取视频列表失败: {e}")
+        logger.error(f"Failed to get videos: {e}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/videos/<path:filename>')
 def serve_video(filename):
-    """提供视频文件"""
+    """Serve video files"""
     return send_from_directory(UPLOAD_FOLDER, filename)
-
-@app.route('/api/upload', methods=['POST'])
-def upload_video():
-    """上传视频"""
-    if 'video' not in request.files:
-        return jsonify({'error': '没有上传文件'}), 400
-    
-    file = request.files['video']
-    if file.filename == '':
-        return jsonify({'error': '没有选择文件'}), 400
-    
-    if file and allowed_file(file.filename, ALLOWED_VIDEO_EXTENSIONS):
-        filename = secure_filename(file.filename)
-        filepath = os.path.join(UPLOAD_FOLDER, filename)
-        file.save(filepath)
-        
-        return jsonify({
-            'name': filename,
-            'url': f'/videos/{filename}'
-        })
-    
-    return jsonify({'error': '不支持的文件格式'}), 400
-
-@app.route('/api/speech-to-text', methods=['POST'])
-def speech_to_text():
-    """使用 DashScope SDK 进行语音识别"""
-    logger.info("收到语音识别请求")
-    
-    if not DASHSCOPE_API_KEY:
-        logger.error("未配置 DASHSCOPE_API_KEY")
-        return jsonify({
-            'error': '未配置 DASHSCOPE_API_KEY',
-            'message': '请在 .env 文件中设置 DASHSCOPE_API_KEY',
-            'transcript': ''
-        }), 500
-    
-    if 'audio' not in request.files:
-        logger.error("没有收到音频文件")
-        return jsonify({
-            'error': '没有音频文件',
-            'transcript': ''
-        }), 400
-    
-    audio_file = request.files['audio']
-    
-    # 保存临时音频文件
-    temp_file = tempfile.NamedTemporaryFile(
-        delete=False, 
-        suffix='.pcm', 
-        dir=TEMP_AUDIO_FOLDER
-    )
-    temp_filepath = temp_file.name
-    temp_file.close()  # 关闭文件以便写入
-    
-    try:
-        # 保存上传的音频
-        audio_file.save(temp_filepath)
-        file_size = os.path.getsize(temp_filepath)
-        logger.info(f"音频文件路径: {temp_filepath}")
-        logger.info(f"音频文件大小: {file_size} bytes")
-        
-        # 使用 DashScope SDK 进行识别
-        logger.info("正在调用 DashScope ASR API...")
-        
-        # 创建 Recognition 对象
-        recognition = Recognition(
-            model='paraformer-realtime-v2',
-            format='pcm',
-            sample_rate=16000,
-            callback=None  # 同步调用
-        )
-        
-        # 读取音频文件内容（作为二进制数据）
-        with open(temp_filepath, 'rb') as f:
-            audio_data = f.read()
-            logger.info(f"音频数据长度: {len(audio_data)} bytes")
-
-        result = recognition.call(temp_filepath)  # ✅ 传入 str
-        
-        logger.info(f"DashScope API 响应状态: {result.get('status_code', 'unknown')}")
-        logger.info(f"DashScope API 完整响应: {json.dumps(result, ensure_ascii=False, indent=2)}")
-        
-        # 检查是否有错误
-        if isinstance(result, dict) and result.get('status_code') != 200:
-            error_msg = result.get('message', '未知错误')
-            logger.error(f"API 返回错误: {error_msg}")
-            return jsonify({
-                'error': 'API 调用失败',
-                'message': error_msg,
-                'transcript': '',
-                'raw': result
-            }), 500
-        
-        # 提取识别结果
-        transcript = extract_transcript(result)
-        
-        if not transcript or transcript.strip() == '':
-            logger.info("识别结果为空")
-            return jsonify({
-                'transcript': '',
-                'message': '未能识别出语音，请确保清晰说话并靠近麦克风',
-                'raw': result
-            })
-        
-        logger.info(f"✅ 识别成功: {transcript}")
-        return jsonify({
-            'transcript': transcript.strip(),
-            'raw': result
-        })
-        
-    except Exception as e:
-        logger.error(f"❌ 语音识别失败: {str(e)}")
-        logger.exception(e)
-        
-        return jsonify({
-            'error': '语音识别失败',
-            'message': str(e),
-            'transcript': ''
-        }), 500
-        
-    finally:
-        # 清理临时文件
-        try:
-            if os.path.exists(temp_filepath):
-                os.unlink(temp_filepath)
-                logger.info("已删除临时音频文件")
-        except Exception as e:
-            logger.warning(f"删除临时文件失败: {e}")
-
-def extract_transcript(result):
-    """从 DashScope 响应中提取识别文本"""
-    if not result:
-        return ''
-    
-    try:
-        # 确保 result 是字典
-        if not isinstance(result, dict):
-            logger.warning(f"响应不是字典类型: {type(result)}")
-            return ''
-        
-        # 检查是否有错误状态码
-        status_code = result.get('status_code')
-        if status_code and status_code != 200:
-            logger.error(f"API 返回错误状态码: {status_code}")
-            return ''
-        
-        # 尝试从 output 中提取
-        output = result.get('output')
-        if not output:
-            logger.warning("响应中没有 output 字段")
-            return ''
-        
-        # 方式1: output.text (最常见)
-        if isinstance(output, dict) and 'text' in output:
-            text = output['text']
-            if isinstance(text, str) and text:
-                logger.info(f"从 output.text 提取: {text}")
-                return text
-        
-        # 方式2: output.sentence.text
-        if isinstance(output, dict) and 'sentence' in output:
-            sentence = output['sentence']
-            if isinstance(sentence, dict) and 'text' in sentence:
-                text = sentence['text']
-                if isinstance(text, str) and text:
-                    logger.info(f"从 output.sentence.text 提取: {text}")
-                    return text
-        
-        # 方式3: output 直接是字符串
-        if isinstance(output, str) and output:
-            logger.info(f"output 直接是字符串: {output}")
-            return output
-        
-        # 方式4: output.results 数组
-        if isinstance(output, dict) and 'results' in output:
-            results = output['results']
-            if isinstance(results, list) and len(results) > 0:
-                texts = []
-                for r in results:
-                    if isinstance(r, dict):
-                        # 尝试多个可能的字段名
-                        text = (r.get('text') or 
-                               r.get('transcription_text') or 
-                               r.get('transcript') or
-                               '')
-                        
-                        # 如果有嵌套的 sentence
-                        if not text and 'sentence' in r:
-                            sentence = r['sentence']
-                            if isinstance(sentence, dict):
-                                text = sentence.get('text', '')
-                        
-                        if text and isinstance(text, str):
-                            texts.append(text)
-                
-                if texts:
-                    combined = ''.join(texts)
-                    logger.info(f"从 output.results 提取: {combined}")
-                    return combined
-        
-        logger.warning(f"无法从响应中提取文本，响应结构: {json.dumps(result, ensure_ascii=False)[:500]}")
-        return ''
-        
-    except Exception as e:
-        logger.error(f"提取文本时出错: {e}")
-        logger.exception(e)
-        return ''
-
-@app.route('/api/health', methods=['GET'])
-def health_check():
-    """健康检查"""
-    return jsonify({
-        'status': 'ok',
-        'dashscopeConfigured': bool(DASHSCOPE_API_KEY),
-        'sdkVersion': dashscope.__version__ if hasattr(dashscope, '__version__') else 'unknown',
-        'timestamp': os.popen('date').read().strip()
-    })
 
 @app.route('/api/hot-words', methods=['GET'])
 def get_hot_words():
-    """Get hot words configuration for voice recognition"""
+    """Get hot words configuration"""
     try:
         return jsonify(HOT_WORDS)
     except Exception as e:
         logger.error(f"Failed to get hot words: {e}")
         return jsonify({'error': str(e), 'hotWords': [], 'settings': {'enabled': False}}), 500
-
-@app.route('/api/hot-words', methods=['POST'])
-def update_hot_words():
-    """Update hot words configuration"""
-    try:
-        global HOT_WORDS
-        data = request.json
-
-        # Validate hot words structure
-        if 'hotWords' not in data:
-            return jsonify({'error': 'Missing hotWords field'}), 400
-
-        HOT_WORDS = data
-
-        # Save to file
-        with open(HOT_WORDS_FILE, 'w', encoding='utf-8') as f:
-            json.dump(HOT_WORDS, f, ensure_ascii=False, indent=2)
-
-        logger.info(f"✅ Updated hot words: {len(HOT_WORDS.get('hotWords', []))} words")
-
-        return jsonify({
-            'status': 'success',
-            'message': f'Updated {len(HOT_WORDS.get("hotWords", []))} hot words',
-            'hotWords': HOT_WORDS
-        })
-    except Exception as e:
-        logger.error(f"Failed to update hot words: {e}")
-        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/llm-match', methods=['POST'])
 def llm_match():
@@ -423,7 +198,6 @@ def llm_match():
 
 def build_llm_matching_prompt(user_speech, videos):
     """Build prompt for LLM to match user speech to video responses"""
-
     prompt = f"""你是一个对话匹配助手。用户说了一句话，你需要从多个视频回复中选择最合适的回应。
 
 用户说: "{user_speech}"
@@ -461,7 +235,6 @@ def build_llm_matching_prompt(user_speech, videos):
 def parse_llm_response(llm_output, videos):
     """Parse LLM response to extract matched index"""
     try:
-        # Try to parse as JSON
         import re
 
         # Find JSON in the response
@@ -569,8 +342,6 @@ class StreamingRecognitionCallback(RecognitionCallback):
             if not result:
                 return ''
 
-            # For streaming callbacks, result is RecognitionResult object
-            # Try to access output directly
             output = None
 
             if hasattr(result, 'output'):
@@ -581,12 +352,11 @@ class StreamingRecognitionCallback(RecognitionCallback):
                 output = result.get('output')
 
             if not output:
-                logger.warning(f"[{self.session_id}] No output in result: {type(result)}, {dir(result)}")
+                logger.warning(f"[{self.session_id}] No output in result")
                 return ''
 
             # Try different output formats
             if isinstance(output, dict):
-                # Method 1: output.sentence array (for file-based)
                 if 'sentence' in output:
                     sentences = output['sentence']
                     if isinstance(sentences, list):
@@ -599,11 +369,9 @@ class StreamingRecognitionCallback(RecognitionCallback):
                     elif isinstance(sentences, dict) and 'text' in sentences:
                         return sentences['text']
 
-                # Method 2: output.text (most common for streaming)
                 if 'text' in output and output['text']:
                     return output['text']
 
-            # Method 3: output is string
             if isinstance(output, str):
                 return output
 
@@ -729,8 +497,6 @@ def handle_audio_data(data):
 
         # data should be Int16Array sent as array of numbers
         if isinstance(data, dict) and 'audio' in data:
-            # Convert Int16 array to bytes
-            # Int16 values are -32768 to 32767, need to convert to bytes properly
             int16_array = data['audio']
 
             # Log first time we receive data
@@ -801,24 +567,45 @@ def handle_stop_recognition(data=None):
 
 if __name__ == '__main__':
     print("=" * 60)
-    print("🎬 语音交互视频播放器 - Python 版本")
+    print("🎬 语音交互视频播放器 - HTTPS 版本")
     print("=" * 60)
     print()
     print("📁 视频目录:", UPLOAD_FOLDER)
     print("🔑 DashScope API Key:", '✅ 已配置' if DASHSCOPE_API_KEY else '❌ 未配置')
-    
+
     if DASHSCOPE_API_KEY:
         print(f"   API Key 前缀: {DASHSCOPE_API_KEY[:10]}...")
-    
+
     try:
         sdk_version = dashscope.__version__ if hasattr(dashscope, '__version__') else 'unknown'
         print(f"📦 DashScope SDK 版本: {sdk_version}")
     except:
         print("📦 DashScope SDK 版本: unknown")
-    
-    print("🌐 访问地址: http://localhost:5000")
+
+    # Check SSL configuration
+    if USE_SSL:
+        print(f"🔒 SSL 模式: 启用")
+        print(f"   证书文件: {SSL_CERT_PATH}")
+        print(f"   密钥文件: {SSL_KEY_PATH}")
+
+        if not os.path.exists(SSL_CERT_PATH) or not os.path.exists(SSL_KEY_PATH):
+            print()
+            print("⚠️  警告: SSL 证书文件不存在!")
+            print("   生成自签名证书 (测试用):")
+            print("   openssl req -x509 -newkey rsa:4096 -nodes -out cert.pem -keyout key.pem -days 365")
+            print()
+            print("   或使用 Let's Encrypt (生产环境):")
+            print("   sudo certbot certonly --standalone -d yourdomain.com")
+            print()
+            USE_SSL = False
+    else:
+        print("🔓 SSL 模式: 禁用 (HTTP)")
+        print("   ⚠️  注意: 浏览器可能阻止麦克风访问 (需要 HTTPS 或 localhost)")
+
+    protocol = "https" if USE_SSL else "http"
+    print(f"🌐 访问地址: {protocol}://localhost:5000")
     print()
-    
+
     if not DASHSCOPE_API_KEY:
         print("⚠️  警告: 未配置 DASHSCOPE_API_KEY")
         print("   请创建 .env 文件并添加:")
@@ -826,13 +613,31 @@ if __name__ == '__main__':
         print()
         print("   获取 API Key: https://dashscope.console.aliyun.com/apiKey")
         print()
-    
+
     print("💡 提示:")
-    print("   - 测试配置: python test_dashscope.py")
-    print("   - 测试音频: python test_audio.py <音频文件>")
-    print("   - 查看日志: 直接查看控制台输出")
+    print("   - 启用 SSL: 在 .env 中添加 USE_SSL=true")
+    print("   - 自定义证书: SSL_CERT_PATH=path/to/cert.pem")
+    print("   - 自定义密钥: SSL_KEY_PATH=path/to/key.pem")
     print()
     print("=" * 60)
     print()
 
-    socketio.run(app, host='0.0.0.0', port=5000, debug=True, allow_unsafe_werkzeug=True)
+    # Run with or without SSL
+    if USE_SSL and os.path.exists(SSL_CERT_PATH) and os.path.exists(SSL_KEY_PATH):
+        socketio.run(
+            app,
+            host='0.0.0.0',
+            port=5000,
+            debug=True,
+            certfile=SSL_CERT_PATH,
+            keyfile=SSL_KEY_PATH,
+            allow_unsafe_werkzeug=True
+        )
+    else:
+        socketio.run(
+            app,
+            host='0.0.0.0',
+            port=5000,
+            debug=True,
+            allow_unsafe_werkzeug=True
+        )
